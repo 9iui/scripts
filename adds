@@ -17,3 +17,4 @@ xpack.security.transport.ssl:
   keystore.path: certs/transport.p12
   truststore.path: certs/transport.p12
 EOF
+sudo /usr/share/elasticsearch/bin/elasticsearch-reconfigure-node
