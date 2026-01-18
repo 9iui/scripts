@@ -34,3 +34,26 @@ sudo systemctl restart elasticsearch
 systemctl status elasticsearch --no-pager
 
 curl --cacert /etc/elasticsearch/certs/http_ca.crt https://localhost:9200
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+sudo -u elasticsearch /usr/share/elasticsearch/bin/elasticsearch \
+  -Epath.conf=/etc/elasticsearch \
+  -Epath.logs=/var/log/elasticsearch \
+  -Epath.data=/var/lib/elasticsearch
+
+
