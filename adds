@@ -56,4 +56,13 @@ sudo -u elasticsearch /usr/share/elasticsearch/bin/elasticsearch \
   -Epath.logs=/var/log/elasticsearch \
   -Epath.data=/var/lib/elasticsearch
 
+sudo -u elasticsearch /usr/share/elasticsearch/bin/elasticsearch \
+  -Epath.logs=/var/log/elasticsearch \
+  -Epath.data=/var/lib/elasticsearch
+
+sudo systemctl restart elasticsearch
+sudo systemctl status elasticsearch --no-pager
+
+
+
 
