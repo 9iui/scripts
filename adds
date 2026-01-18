@@ -1,4 +1,4 @@
-sudo tee /etc/elasticsearch/elasticsearch.yml > /dev/null <<EOF
+sudo tee /etc/elasticsearch/elasticsearch.yml > /dev/null <<'EOF'
 cluster.name: elk-cluster
 node.name: node-1
 discovery.type: single-node
@@ -17,4 +17,3 @@ xpack.security.transport.ssl:
   keystore.path: certs/transport.p12
   truststore.path: certs/transport.p12
 EOF
-sudo /usr/share/elasticsearch/bin/elasticsearch-reconfigure-node
