@@ -17,3 +17,20 @@ xpack.security.transport.ssl:
   keystore.path: certs/transport.p12
   truststore.path: certs/transport.p12
 EOF
+
+
+sudo mkdir -p /var/log/elasticsearch
+sudo chown -R elasticsearch:elasticsearch /var/log/elasticsearch
+sudo chmod 750 /var/log/elasticsearch
+
+sudo mkdir -p /var/lib/elasticsearch
+sudo chown -R elasticsearch:elasticsearch /var/lib/elasticsearch
+sudo chmod 750 /var/lib/elasticsearch
+
+
+sudo systemctl daemon-reload
+sudo systemctl restart elasticsearch
+
+systemctl status elasticsearch --no-pager
+
+curl --cacert /etc/elasticsearch/certs/http_ca.crt https://localhost:9200
