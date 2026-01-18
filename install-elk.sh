@@ -1,56 +1,39 @@
 #!/usr/bin/env bash
-set -e
+set -euo pipefail
 
 echo "==============================="
-echo " ELK Stack Installation Script "
-echo " Ubuntu 20.04 / 22.04 "
+echo " ELK All-in-One Install Script "
+echo " Ubuntu 20.04 / 22.04 | Elastic 8.x"
 echo "==============================="
 
-# ---- VARIABLES ----
-ELASTIC_VERSION="8.x"
-
-# ---- CHECK ROOT ----
-if [ "$EUID" -ne 0 ]; then
-  echo "❌ Please run as root or with sudo"
+# ----- ROOT CHECK -----
+if [ "${EUID}" -ne 0 ]; then
+  echo "❌ Run with sudo: sudo ./install-elk-all-in-one.sh"
   exit 1
 fi
 
-# ---- SYSTEM UPDATE ----
-echo "[+] Updating system..."
-apt update && apt upgrade -y
+ELASTIC_VERSION="8.x"
+ELASTIC_PASSWORD_FILE="/root/elastic-password.txt"
+KIBANA_ENROLLMENT_FILE="/root/kibana-enrollment-token.txt"
 
-# ---- DEPENDENCIES ----
-echo "[+] Installing dependencies..."
+echo "[+] Update system + install deps..."
+apt update && apt upgrade -y
 apt install -y curl apt-transport-https ca-certificates gnupg openjdk-17-jdk
 
-# ---- JAVA CHECK ----
-echo "[+] Java version:"
-java -version
-
-# ---- ADD ELASTIC REPO ----
-echo "[+] Adding Elastic GPG key..."
+echo "[+] Add Elastic repo key..."
 curl -fsSL https://artifacts.elastic.co/GPG-KEY-elasticsearch \
 | gpg --dearmor -o /usr/share/keyrings/elastic-keyring.gpg
 
-echo "[+] Adding Elastic repository..."
-echo "deb [signed-by=/usr/share/keyrings/elastic-keyring.gpg] \
-https://artifacts.elastic.co/packages/${ELASTIC_VERSION}/apt stable main" \
-| tee /etc/apt/sources.list.d/elastic-${ELASTIC_VERSION}.list
+echo "[+] Add Elastic repo..."
+echo "deb [signed-by=/usr/share/keyrings/elastic-keyring.gpg] https://artifacts.elastic.co/packages/${ELASTIC_VERSION}/apt stable main" \
+| tee /etc/apt/sources.list.d/elastic-${ELASTIC_VERSION}.list >/dev/null
 
 apt update
 
-# ---- INSTALL ELK ----
-echo "[+] Installing Elasticsearch..."
-apt install -y elasticsearch
+echo "[+] Install Elasticsearch + Logstash + Kibana..."
+apt install -y elasticsearch logstash kibana
 
-echo "[+] Installing Logstash..."
-apt install -y logstash
-
-echo "[+] Installing Kibana..."
-apt install -y kibana
-
-# ---- CONFIGURE ELASTICSEARCH ----
-echo "[+] Configuring Elasticsearch..."
+echo "[+] Configure Elasticsearch (all-in-one, local-only HTTP)..."
 cat <<EOF > /etc/elasticsearch/elasticsearch.yml
 cluster.name: elk-cluster
 node.name: node-1
@@ -59,25 +42,49 @@ http.port: 9200
 discovery.type: single-node
 EOF
 
-# ---- MEMORY SETTINGS ----
-echo "[+] Setting Elasticsearch JVM memory..."
+echo "[+] Set Elasticsearch heap (safe default for small lab)..."
 mkdir -p /etc/elasticsearch/jvm.options.d
 cat <<EOF > /etc/elasticsearch/jvm.options.d/heap.options
 -Xms1g
 -Xmx1g
 EOF
 
-# ---- CONFIGURE KIBANA ----
-echo "[+] Configuring Kibana..."
+echo "[+] Enable + start Elasticsearch..."
+systemctl enable elasticsearch
+systemctl start elasticsearch
+
+echo "[+] Wait for Elasticsearch..."
+for i in {1..60}; do
+  if curl -s http://localhost:9200 >/dev/null 2>&1; then
+    break
+  fi
+  sleep 2
+done
+
+echo "[+] Create elastic password (saved root-only)..."
+ELASTIC_PASS=$(/usr/share/elasticsearch/bin/elasticsearch-reset-password -u elastic -b | awk '{print $NF}')
+echo "${ELASTIC_PASS}" > "${ELASTIC_PASSWORD_FILE}"
+chmod 600 "${ELASTIC_PASSWORD_FILE}"
+echo "    Saved: ${ELASTIC_PASSWORD_FILE}"
+
+echo "[+] Create Kibana enrollment token (saved root-only)..."
+KIBANA_TOKEN=$(/usr/share/elasticsearch/bin/elasticsearch-create-enrollment-token -s kibana)
+echo "${KIBANA_TOKEN}" > "${KIBANA_ENROLLMENT_FILE}"
+chmod 600 "${KIBANA_ENROLLMENT_FILE}"
+echo "    Saved: ${KIBANA_ENROLLMENT_FILE}"
+
+echo "[+] Configure Kibana..."
 cat <<EOF > /etc/kibana/kibana.yml
 server.port: 5601
 server.host: "0.0.0.0"
-elasticsearch.hosts: ["http://localhost:9200"]
+elasticsearch.hosts: ["https://localhost:9200"]
 EOF
 
-# ---- CREATE LOGSTASH PIPELINE ----
-echo "[+] Creating Logstash test pipeline..."
-cat <<EOF > /etc/logstash/conf.d/test.conf
+echo "[+] Enroll Kibana (one-time bootstrap)..."
+/usr/share/kibana/bin/kibana-setup --enrollment-token "${KIBANA_TOKEN}" || true
+
+echo "[+] Configure Logstash pipeline (Beats -> Elasticsearch)..."
+cat <<EOF > /etc/logstash/conf.d/beats-to-es.conf
 input {
   beats {
     port => 5044
@@ -86,43 +93,41 @@ input {
 
 output {
   elasticsearch {
-    hosts => ["http://localhost:9200"]
+    hosts => ["https://localhost:9200"]
+    user => "elastic"
+    password => "${ELASTIC_PASS}"
+    ssl => true
+    cacert => "/etc/elasticsearch/certs/http_ca.crt"
     index => "logs-%{+YYYY.MM.dd}"
   }
 }
 EOF
 
-# ---- ENABLE & START SERVICES ----
-echo "[+] Enabling and starting services..."
-systemctl daemon-reexec
-systemctl enable elasticsearch logstash kibana
-systemctl start elasticsearch logstash kibana
+echo "[+] Enable + restart Kibana + Logstash..."
+systemctl enable kibana logstash
+systemctl restart kibana
+systemctl restart logstash
 
-# ---- FIREWALL ----
+# UFW rules (optional + safe)
 if command -v ufw >/dev/null 2>&1; then
-  echo "[+] Configuring UFW firewall..."
-  ufw allow 9200
-  ufw allow 5601
-  ufw allow 5044
+  echo "[+] Opening ports (if UFW is active)..."
+  ufw allow 5601 >/dev/null 2>&1 || true
+  ufw allow 5044 >/dev/null 2>&1 || true
 fi
 
-# ---- STATUS CHECK ----
 echo "==============================="
-echo " Service Status "
+echo " Verification "
 echo "==============================="
-systemctl --no-pager status elasticsearch | head -n 5
-systemctl --no-pager status kibana | head -n 5
-systemctl --no-pager status logstash | head -n 5
 
-echo "==============================="
-echo " ELK Installation Complete "
-echo "==============================="
-echo "Elasticsearch: http://localhost:9200"
-echo "Kibana: http://<SERVER-IP>:5601"
+echo "[+] Elasticsearch (TLS + auth) test:"
+curl --cacert /etc/elasticsearch/certs/http_ca.crt \
+  -u "elastic:${ELASTIC_PASS}" \
+  https://localhost:9200 | head -n 5 || true
+
 echo ""
-echo "⚠️  Next Steps:"
-echo "1. Reset elastic password:"
-echo "   /usr/share/elasticsearch/bin/elasticsearch-reset-password -u elastic"
+echo "✅ ELK All-in-One installed!"
+echo "Kibana UI: http://<SERVER-IP>:5601"
+echo "Elastic password: ${ELASTIC_PASSWORD_FILE}"
+echo "Kibana token: ${KIBANA_ENROLLMENT_FILE}"
 echo ""
-echo "2. Generate Kibana enrollment token:"
-echo "   /usr/share/elasticsearch/bin/elasticsearch-create-enrollment-token -s kibana"
+echo "Next: ship logs with Filebeat to port 5044."
